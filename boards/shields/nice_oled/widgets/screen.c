@@ -605,7 +605,8 @@ static void clear_key_labels(lv_timer_t *timer) {
 
 static void set_mods_status(struct zmk_widget_screen *widget, struct mods_status_state state) {
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-    if (!state.pressed || state.usage_page != HID_USAGE_KEY) return;
+    if (!state.pressed || state.usage_page != HID_USAGE_KEY ||
+        (state.keycode >= 0xE0 && state.keycode <= 0xE7)) return;
 
     format_key_label(widget->state.key_label, sizeof(widget->state.key_label), &state);
     draw_canvas(widget->obj, widget->cbuf, &widget->state);
