@@ -55,6 +55,7 @@ struct status_state {
 #endif
 #if IS_ENABLED(CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED)
     uint8_t mod_state;
+    char key_label[24];
 #endif
 
 #else

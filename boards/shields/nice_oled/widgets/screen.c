@@ -254,8 +254,81 @@ static struct zmk_widget_modifiers modifiers_widget;
 #if IS_ENABLED(CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED)
 
 struct mods_status_state {
-    uint8_t mods;
+    uint16_t usage_page;
+    uint32_t keycode;
+    uint8_t implicit_modifiers;
+    uint8_t explicit_modifiers;
+    bool pressed;
 };
+
+static lv_timer_t *key_label_timer;
+
+static void append_key_label(char *label, size_t size, const char *text) {
+    size_t used = strlen(label);
+    if (used < size - 1) {
+        snprintf(label + used, size - used, "%s", text);
+    }
+}
+
+static const char *keycode_name(uint32_t keycode, char scratch[8]) {
+    if (keycode >= 0x04 && keycode <= 0x1D) {
+        scratch[0] = 'A' + (keycode - 0x04);
+        scratch[1] = '\0';
+        return scratch;
+    }
+    if (keycode >= 0x1E && keycode <= 0x26) {
+        scratch[0] = '1' + (keycode - 0x1E);
+        scratch[1] = '\0';
+        return scratch;
+    }
+    if (keycode == 0x27) return "0";
+    if (keycode >= 0x3A && keycode <= 0x45) {
+        snprintf(scratch, 8, "F%u", (unsigned)(keycode - 0x39));
+        return scratch;
+    }
+    if (keycode >= 0x68 && keycode <= 0x73) {
+        snprintf(scratch, 8, "F%u", (unsigned)(keycode - 0x5B));
+        return scratch;
+    }
+
+    switch (keycode) {
+    case 0x28: return "ENTER";
+    case 0x29: return "ESC";
+    case 0x2A: return "BKSP";
+    case 0x2B: return "TAB";
+    case 0x2C: return "SPACE";
+    case 0x4F: return "RIGHT";
+    case 0x50: return "LEFT";
+    case 0x51: return "DOWN";
+    case 0x52: return "UP";
+    case 0xE0:
+    case 0xE4: return "CTRL";
+    case 0xE1:
+    case 0xE5: return "SHIFT";
+    case 0xE2:
+    case 0xE6: return "ALT";
+    case 0xE3:
+    case 0xE7: return "WIN";
+    default:
+        snprintf(scratch, 8, "KEY%02X", (unsigned)keycode);
+        return scratch;
+    }
+}
+
+static void format_key_label(char *label, size_t size, const struct mods_status_state *state) {
+    char scratch[8];
+    uint8_t mods = state->implicit_modifiers | state->explicit_modifiers |
+                   zmk_hid_get_explicit_mods();
+
+    label[0] = '\0';
+    if (state->keycode < 0xE0 || state->keycode > 0xE7) {
+        if (mods & (MOD_LCTL | MOD_RCTL)) append_key_label(label, size, "CTRL+");
+        if (mods & (MOD_LSFT | MOD_RSFT)) append_key_label(label, size, "SHIFT+");
+        if (mods & (MOD_LALT | MOD_RALT)) append_key_label(label, size, "ALT+");
+        if (mods & (MOD_LGUI | MOD_RGUI)) append_key_label(label, size, "WIN+");
+    }
+    append_key_label(label, size, keycode_name(state->keycode, scratch));
+}
 
 // Declaraciones de imágenes de símbolos reales (de modifiers_270.c)
 #if IS_ENABLED(CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED_SYMBOL)
@@ -506,20 +579,41 @@ static void draw_mods_status(lv_obj_t *canvas, const struct status_state *state)
 #endif // CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED_SYMBOL
 }
 
+static void draw_key_status(lv_obj_t *canvas, const struct status_state *state) {
+    if (!state->key_label[0]) return;
+
+    lv_draw_label_dsc_t label_dsc;
+    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &pixel_operator_mono_8, LV_TEXT_ALIGN_CENTER);
+    lv_canvas_draw_text(canvas, 0, CONFIG_NICE_OLED_WIDGET_MODIFIERS_CUSTOM_Y + 8, 68,
+                        &label_dsc, state->key_label);
+}
+
 #endif // IS_ENABLED(CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED)
 //  FIN SECCIÓN MODIFICADORES (NUEVA INTEGRACIÓN)
 
 //  INICIO SECCIÓN LISTENER MODIFICADORES (NUEVA INTEGRACIÓN)
 #if IS_ENABLED(CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED)
 
-// Función para actualizar el estado del widget (adaptada al patrón existente)
-static void set_mods_status(struct zmk_widget_screen *widget,
-                            struct mods_status_state state /* No usada directamente */) {
+static void clear_key_labels(lv_timer_t *timer) {
+    struct zmk_widget_screen *widget;
+    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
+        widget->state.key_label[0] = '\0';
+        draw_canvas(widget->obj, widget->cbuf, &widget->state);
+    }
+    lv_timer_pause(timer);
+}
+
+static void set_mods_status(struct zmk_widget_screen *widget, struct mods_status_state state) {
 #if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-    // Obtiene el estado actual de los modificadores directamente
-    widget->state.mod_state = zmk_hid_get_explicit_mods();
-    // Vuelve a dibujar todo el canvas para reflejar el cambio
+    if (!state.pressed || state.usage_page != HID_USAGE_KEY) return;
+
+    format_key_label(widget->state.key_label, sizeof(widget->state.key_label), &state);
     draw_canvas(widget->obj, widget->cbuf, &widget->state);
+    if (key_label_timer) {
+        lv_timer_set_period(key_label_timer, 1500);
+        lv_timer_reset(key_label_timer);
+        lv_timer_resume(key_label_timer);
+    }
 #endif
 }
 
@@ -531,13 +625,14 @@ static void mods_status_update_cb(struct mods_status_state state) {
 
 // Función para obtener el estado (requerida por el listener)
 static struct mods_status_state mods_status_get_state(const zmk_event_t *eh) {
-#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-    // No necesita devolver el estado real aquí porque set_mods_status lo obtiene
-    // Pero podríamos devolverlo si quisiéramos coherencia
-    return (struct mods_status_state){.mods = zmk_hid_get_explicit_mods()};
-#else
-    return (struct mods_status_state){.mods = 0}; // Estado vacío para periférico
-#endif
+    const struct zmk_keycode_state_changed *ev = as_zmk_keycode_state_changed(eh);
+    if (!ev) return (struct mods_status_state){};
+
+    return (struct mods_status_state){.usage_page = ev->usage_page,
+                                      .keycode = ev->keycode,
+                                      .implicit_modifiers = ev->implicit_modifiers,
+                                      .explicit_modifiers = ev->explicit_modifiers,
+                                      .pressed = ev->state};
 };
 
 // Registra el listener para el estado de los modificadores
@@ -886,8 +981,7 @@ static void draw_canvas(lv_obj_t *widget, lv_color_t cbuf[], const struct status
 #endif // CONFIG_NICE_OLED_WIDGET_RAW_HID
 
 #if IS_ENABLED(CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED)
-    // Dibuja los modificadores si la nueva Kconfig está habilitada
-    draw_mods_status(canvas, state);
+    draw_key_status(canvas, state);
 #endif // <-- NUEVO
 
     // Rotate for horizontal display
@@ -1158,6 +1252,10 @@ int zmk_widget_screen_init(struct zmk_widget_screen *widget, lv_obj_t *parent) {
 #endif
 
 #if IS_ENABLED(CONFIG_NICE_OLED_WIDGET_MODIFIERS_INDICATORS_FIXED) // <-- NUEVO
+    if (!key_label_timer) {
+        key_label_timer = lv_timer_create(clear_key_labels, 1500, NULL);
+        lv_timer_pause(key_label_timer);
+    }
     widget_mods_status_init(); // <-- Inicializa el nuevo listener
 #endif                         // <-- NUEVO
 
