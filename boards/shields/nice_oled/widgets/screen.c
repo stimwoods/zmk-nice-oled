@@ -322,10 +322,10 @@ static void format_key_label(char *label, size_t size, const struct mods_status_
 
     label[0] = '\0';
     if (state->keycode < 0xE0 || state->keycode > 0xE7) {
-        if (mods & (MOD_LCTL | MOD_RCTL)) append_key_label(label, size, "CTRL+");
-        if (mods & (MOD_LSFT | MOD_RSFT)) append_key_label(label, size, "SHIFT+");
-        if (mods & (MOD_LALT | MOD_RALT)) append_key_label(label, size, "ALT+");
-        if (mods & (MOD_LGUI | MOD_RGUI)) append_key_label(label, size, "WIN+");
+        if (mods & (MOD_LCTL | MOD_RCTL)) append_key_label(label, size, "C+");
+        if (mods & (MOD_LSFT | MOD_RSFT)) append_key_label(label, size, "S+");
+        if (mods & (MOD_LALT | MOD_RALT)) append_key_label(label, size, "A+");
+        if (mods & (MOD_LGUI | MOD_RGUI)) append_key_label(label, size, "W+");
     }
     append_key_label(label, size, keycode_name(state->keycode, scratch));
 }
@@ -583,8 +583,8 @@ static void draw_key_status(lv_obj_t *canvas, const struct status_state *state) 
     if (!state->key_label[0]) return;
 
     lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &pixel_operator_mono_8, LV_TEXT_ALIGN_CENTER);
-    lv_canvas_draw_text(canvas, 0, CONFIG_NICE_OLED_WIDGET_MODIFIERS_CUSTOM_Y + 8, 68,
+    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &pixel_operator_mono_8, LV_TEXT_ALIGN_LEFT);
+    lv_canvas_draw_text(canvas, 0, CONFIG_NICE_OLED_WIDGET_MODIFIERS_CUSTOM_Y + 8, 32,
                         &label_dsc, state->key_label);
 }
 
